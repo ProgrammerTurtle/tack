@@ -1,11 +1,12 @@
 // Cloudflare Worker for Tack at parkerrupe.xyz/tack.
 //   /tack/*      the static app (from dist/, built by build.sh)
-//   /tack/api/*  the sync API (worker/index.js), behind Cloudflare Access
+//   /tack/api/*  the sync API (worker/index.js), with email/password accounts (Better Auth)
 // Publish with: sh deploy.sh
 {
   "name": "tack",
   "main": "worker/index.js",
   "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -23,12 +24,6 @@
   ],
   "kv_namespaces": [
     { "binding": "IMAGES", "id": "7bfe9cf2ad7e49368058afcd4edad80e" }
-  ],
-  // From your Cloudflare Access application (Zero Trust → Access → Applications):
-  // TEAM_DOMAIN is like "yourteam.cloudflareaccess.com", POLICY_AUD is the app's "Application Audience (AUD) Tag".
-  // Neither is secret. Until both are set, the sync API answers "not configured" and Tack stays local-only.
-  "vars": {
-    "TEAM_DOMAIN": "soft-frog-def6.cloudflareaccess.com",
-    "POLICY_AUD": "5d0754eebf0ba5b8827c66dcc62f8c16596ee3d3ca9189f3af7b0890eced9b25"
-  }
+  ]
+  // Better Auth needs BETTER_AUTH_SECRET: `npx wrangler secret put BETTER_AUTH_SECRET` (and in .dev.vars locally).
 }

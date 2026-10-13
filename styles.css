@@ -309,3 +309,33 @@ button.danger-solid:hover { background: #f2555a; }
 /* lines: at least one screen pixel wide; pixel-aligned when zoomed out so weights look even */
 #world .line { stroke-width: max(calc(var(--sw) * 1px), calc(1px / var(--z))); }
 #world.far .line { shape-rendering: crispEdges; }
+
+/* sign-in form */
+#authForm { display: flex; flex-direction: column; gap: 8px; }
+#authForm h3 { margin: 0; font-size: 15px; }
+#authForm p { margin: 0 0 4px; }
+#authForm input {
+  font: inherit; font-size: 14px; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 9px 10px;
+}
+#authForm input:focus { outline: none; border-color: var(--accent); }
+#authForm .auth-error { color: #ff8a8e; min-height: 0; margin: 0; font-size: 12.5px; }
+#authForm .auth-error:empty { display: none; }
+#authForm .btn.primary { padding: 9px 10px; }
+#authForm .btn.primary:disabled { opacity: .6; }
+#authForm .link { box-shadow: none; background: none; color: var(--muted); font-size: 12.5px; padding: 4px; }
+#authForm .link:hover { color: var(--ink); background: none; }
+
+/* connect an AI tool */
+.syncmenu button.wide { box-shadow: inset 0 0 0 1px var(--line); }
+dialog.wide { width: min(620px, calc(100vw - 32px)); }
+#aiBody h3 { font-size: 13px; margin: 14px 0 6px; color: var(--ink); }
+.codebox { display: flex; gap: 8px; align-items: flex-start; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.codebox code, .codebox pre { flex: 1; min-width: 0; margin: 0; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); white-space: pre-wrap; word-break: break-all; user-select: text; -webkit-user-select: text; }
+.codebox button { box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; padding: 5px 10px; flex: none; }
+.dlg-text.small { font-size: 12.5px; margin-top: 14px; }
+.dlg-text a { color: var(--accent); }
+.dlg-actions.spread { justify-content: space-between; margin-top: 16px; }
+button.danger-text { color: #ff8a8e; box-shadow: none !important; }
+button.danger-text:hover { background: rgba(255, 107, 112, .1); }

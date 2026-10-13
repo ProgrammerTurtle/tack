@@ -40,22 +40,32 @@ Tack can be served at a path on a domain you manage with Cloudflare, like `yourd
 
 To use a different path than `/tack`, change it in the two routes in `wrangler.jsonc` and in `deploy.sh`.
 
-### Sync across devices (optional)
+### Accounts and sync (optional)
 
-The hosted copy can sync boards and images through Cloudflare (D1 for boards, KV for images), with sign-in handled by Cloudflare Access. Without it, boards stay in each browser.
+The hosted copy can sync boards and images across devices. Accounts are email + password ([Better Auth](https://www.better-auth.com)), boards live in Cloudflare D1 and images in KV. Without an account, boards just stay in the browser.
 
-1. Create the storage once (already done for parkerrupe.xyz; IDs are in `wrangler.jsonc`):
-   ```bash
-   npx wrangler d1 create tack
-   npx wrangler kv namespace create tack-images
-   npx wrangler d1 execute tack --remote --file worker/schema.sql
-   ```
-2. In the Cloudflare dashboard, open **Zero Trust → Access → Applications**, add a **self-hosted** application for your domain with the path `tack/api`, and give it an Allow policy (for example, your email address, with the one-time PIN login).
-3. Put your team domain (`<team>.cloudflareaccess.com`) and the application's **AUD tag** into `vars` in `wrangler.jsonc`, then `sh deploy.sh`.
+One-time setup (already done for parkerrupe.xyz; IDs are in `wrangler.jsonc`):
 
-Tack keeps working offline and saves locally first; changes sync a couple of seconds later. If the same board was changed on two devices, the older copy is kept as a separate “conflict copy” board, so nothing is overwritten. Each signed-in person only ever sees their own boards.
+```bash
+npm install
+npx wrangler d1 create tack
+npx wrangler kv namespace create tack-images
+npx wrangler d1 execute tack --remote --file worker/schema.sql
+npx wrangler d1 execute tack --remote --file worker/auth-schema.sql
+openssl rand -hex 32 | npx wrangler secret put BETTER_AUTH_SECRET
+```
 
-To test locally: put `DEV_USER=you@example.com` in `.dev.vars`, then `npx wrangler dev --local-upstream localhost:8787` and open http://localhost:8787/tack/. That bypass only works on localhost.
+Tack keeps working offline and saves locally first; changes sync a couple of seconds later. If the same board was changed on two devices, the older copy is kept as a separate “conflict copy” board, so nothing is overwritten. Each account only ever sees its own boards.
+
+To run the whole thing locally: put `BETTER_AUTH_SECRET=<anything long>` in `.dev.vars`, apply both schema files with `--local`, then `npx wrangler dev --local-upstream localhost:8787` and open http://localhost:8787/tack/.
+
+### API and AI tools
+
+- **API reference:** `/tack/api/docs` (Scalar), with the OpenAPI spec at `/tack/api/openapi.json`.
+- **MCP server:** `/tack/api/mcp`, so AI assistants can read and edit your boards. In the app, open the account menu → **Connect an AI tool** to get a key and a ready-to-paste command, e.g. for Claude Code:
+  ```bash
+  claude mcp add --transport http tack https://parkerrupe.xyz/tack/api/mcp --header "Authorization: Bearer <key>"
+  ```
 
 ## Using it
 

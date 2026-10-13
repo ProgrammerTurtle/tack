@@ -1,0 +1,12 @@
+{
+  "name": "tack",
+  "private": true,
+  "description": "An open-source sticky-note board",
+  "license": "MIT",
+  "scripts": {
+    "deploy": "sh deploy.sh"
+  },
+  "dependencies": {
+    "better-auth": "1.7.7"
+  }
+}

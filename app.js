@@ -2480,7 +2480,7 @@
   // devices' changes are pulled in. Each board carries the server version it was last synced
   // at (`rv` in the index); the server refuses a save based on an older version, and then the
   // local copy is kept as a separate "conflict copy" board, so nothing is ever overwritten.
-  const DELETES_KEY = 'tack:pendingDeletes', UPLOADED_KEY = 'tack:uploaded';
+  const DELETES_KEY = 'tack:pendingDeletes', UPLOADED_KEY = 'tack:uploaded', SYNC_USER_KEY = 'tack:syncUser';
   const API = new URL('api/', location.href).toString();
   const sync = { state: 'off', email: null, timer: null, running: false, again: false, last: 0 };
   class SignedOut extends Error {}
@@ -2533,7 +2533,17 @@
       const res = await api('me');
       if (res.status === 404 || res.status === 503) return setSync('off');
       if (!res.ok) return setSync('error');
-      sync.email = (await res.json()).email;
+      const me = await res.json();
+      sync.email = me.email;
+      // A different account signed in on this browser: treat every local board as new to it.
+      const prev = store.get(SYNC_USER_KEY);
+      if (prev && prev !== me.id) {
+        const idx = store.get(INDEX_KEY, []);
+        idx.forEach(e => { delete e.rv; e.dirty = !e.seed; });
+        store.set(INDEX_KEY, idx);
+        store.set(UPLOADED_KEY, []);
+      }
+      store.set(SYNC_USER_KEY, me.id);
       setSync('idle');
       runSync();
     } catch (err) {
@@ -2680,20 +2690,124 @@
     syncBtn.title = SYNC_TEXT[state] || '';
     if (!syncMenu.hidden) drawSyncMenu();
   }
+  let authMode = 'in'; // 'in' (sign in) or 'up' (create account)
   function drawSyncMenu() {
     const st = sync.state;
     const when = sync.last ? `Last synced ${timeAgo(sync.last)}` : '';
-    syncMenu.innerHTML = st === 'signed-out'
-      ? `<p>Sign in to keep your boards in sync on every device. Boards stay in this browser too.</p><a class="btn primary" href="${API}login">Sign in</a>`
-      : `<p><b>${esc(sync.email || '')}</b><br><span>${esc(SYNC_TEXT[st] || '')}${when && st === 'idle' ? ' · ' + when : ''}</span></p>
-         <div class="row"><button id="syncNow">Sync now</button><a class="btn" href="/cdn-cgi/access/logout">Sign out</a></div>`;
-    const now = $('#syncNow');
-    if (now) now.onclick = () => runSync();
+    if (st === 'signed-out') {
+      const up = authMode === 'up';
+      syncMenu.innerHTML = `
+        <form id="authForm" novalidate>
+          <h3>${up ? 'Create an account' : 'Sign in'}</h3>
+          <p>${up ? 'Your boards will sync to every device you sign in on.' : 'Sync your boards across devices. They stay in this browser too.'}</p>
+          <input name="email" type="email" placeholder="Email" autocomplete="email" required>
+          <input name="password" type="password" placeholder="Password${up ? ' (8+ characters)' : ''}" autocomplete="${up ? 'new-password' : 'current-password'}" required minlength="8">
+          <p class="auth-error" id="authError" role="alert"></p>
+          <button class="btn primary" type="submit">${up ? 'Create account' : 'Sign in'}</button>
+          <button class="link" type="button" id="authSwitch">${up ? 'Have an account? Sign in' : 'New here? Create an account'}</button>
+        </form>`;
+      $('#authSwitch').onclick = () => { authMode = up ? 'in' : 'up'; drawSyncMenu(); $('#authForm input[name=email]').focus(); };
+      $('#authForm').onsubmit = submitAuth;
+      return;
+    }
+    syncMenu.innerHTML = `<p><b>${esc(sync.email || '')}</b><br><span>${esc(SYNC_TEXT[st] || '')}${when && st === 'idle' ? ' · ' + when : ''}</span></p>
+       <div class="row"><button id="syncNow">Sync now</button><button id="signOut">Sign out</button></div>
+       <button id="aiConnect" class="wide">Connect an AI tool…</button>`;
+    $('#syncNow').onclick = () => runSync();
+    $('#signOut').onclick = signOut;
+    $('#aiConnect').onclick = openAiDialog;
+  }
+
+  async function submitAuth(e) {
+    e.preventDefault();
+    const form = e.target, err = $('#authError'), btn = form.querySelector('button[type=submit]');
+    const email = form.email.value.trim(), password = form.password.value;
+    if (!/^\S+@\S+\.\S+$/.test(email)) { err.textContent = 'Enter a valid email address.'; return; }
+    if (password.length < 8) { err.textContent = 'Passwords need at least 8 characters.'; return; }
+    btn.disabled = true;
+    err.textContent = '';
+    try {
+      const up = authMode === 'up';
+      const res = await fetch(API + (up ? 'auth/sign-up/email' : 'auth/sign-in/email'), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(up ? { email, password, name: email.split('@')[0] } : { email, password }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        err.textContent = res.status === 429 ? 'Too many tries. Wait a minute and try again.'
+          : data.message || (up ? 'Couldn’t create that account.' : 'Wrong email or password.');
+        return;
+      }
+      syncMenu.hidden = true;
+      await startSync();
+      toast(up ? 'Account created. Your boards are syncing.' : 'Signed in. Your boards are syncing.');
+    } catch {
+      err.textContent = 'Couldn’t reach the server. Check your connection.';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ---- AI tools (MCP)
+  const aiDlg = $('#aiDlg');
+  async function openAiDialog() {
+    syncMenu.hidden = true;
+    const body = $('#aiBody');
+    body.innerHTML = '<p class="dlg-text">Creating a key…</p>';
+    aiDlg.showModal();
+    try {
+      const res = await fetch(API + 'ai-keys', { method: 'POST', credentials: 'same-origin' });
+      if (!res.ok) throw new Error(res.status);
+      const { token } = await res.json();
+      const url = API + 'mcp';
+      const claude = `claude mcp add --transport http tack ${url} --header "Authorization: Bearer ${token}"`;
+      const config = JSON.stringify({ mcpServers: { tack: { type: 'http', url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2);
+      body.innerHTML = `
+        <p class="dlg-text">Lets an AI assistant read and edit your boards through MCP. Changes show up here within a minute.
+        Anyone with this key can edit your boards, so keep it private.</p>
+        <h3>Claude Code</h3>
+        <div class="codebox"><code id="aiClaude"></code><button type="button" data-copy="aiClaude">Copy</button></div>
+        <h3>Other MCP apps</h3>
+        <div class="codebox"><pre id="aiConfig"></pre><button type="button" data-copy="aiConfig">Copy</button></div>
+        <p class="dlg-text small">API reference: <a href="${API}docs" target="_blank" rel="noopener">${API}docs</a></p>`;
+      $('#aiClaude').textContent = claude;
+      $('#aiConfig').textContent = config;
+    } catch {
+      body.innerHTML = '<p class="dlg-text">Couldn’t create a key. Check that you’re signed in and online.</p>';
+    }
+  }
+  aiDlg.addEventListener('click', async e => {
+    const b = e.target.closest('[data-copy]');
+    if (b) {
+      try { await navigator.clipboard.writeText($('#' + b.dataset.copy).textContent); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy'), 1500); }
+      catch { toast('Couldn’t copy. Select the text and copy it manually.'); }
+    }
+    if (e.target.id === 'aiRevoke') {
+      if (!confirm('Disconnect every AI tool? Their keys stop working immediately.')) return;
+      const res = await fetch(API + 'ai-keys', { method: 'DELETE', credentials: 'same-origin' }).catch(() => null);
+      const n = res && res.ok ? (await res.json()).revoked : null;
+      aiDlg.close();
+      toast(n == null ? 'Couldn’t reach the server' : `Revoked ${n} AI key${n === 1 ? '' : 's'}`);
+    }
+  });
+
+  async function signOut() {
+    try { await fetch(API + 'auth/sign-out', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
+    sync.email = null;
+    setSync('signed-out');
+    syncMenu.hidden = true;
+    toast('Signed out. Your boards are still on this device.');
   }
   syncBtn.onclick = () => {
     syncMenu.hidden = !syncMenu.hidden;
-    if (!syncMenu.hidden) drawSyncMenu();
+    if (!syncMenu.hidden) {
+      drawSyncMenu();
+      syncMenu.querySelector('input')?.focus();
+    }
   };
+  syncMenu.addEventListener('keydown', e => { if (e.key === 'Escape') { syncMenu.hidden = true; syncBtn.focus(); } });
   document.addEventListener('pointerdown', e => {
     if (!syncMenu.hidden && !e.target.closest('#syncMenu, #syncBtn')) syncMenu.hidden = true;
   });

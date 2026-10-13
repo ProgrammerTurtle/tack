@@ -1,15 +1,17 @@
 // Tack sync API, served at /tack/api/*. Everything else under /tack/ is the static app.
 //
-// Requests must come through Cloudflare Access, which signs in the user and adds a signed
-// token (JWT). We verify that token ourselves rather than trusting any header blindly, and
-// scope every read and write to the signed-in email address.
+// Accounts are email/password via Better Auth (/tack/api/auth/*). Every other API call needs a
+// valid session, and all reads and writes are scoped to that account's user id.
 //
 // Boards live in D1 (env.DB), images in KV (env.IMAGES).
+import { createAuth, AUTH_BASE } from './auth.js';
+import { openApiSpec, docsPage } from './openapi.js';
+import { ID_RE, MAX_BOARD_BYTES, listBoards, getBoard, saveBoard, deleteBoard } from './boards.js';
+import { handleMcp } from './mcp.js';
 
 const API = '/tack/api/';
-const ID_RE = /^[a-z0-9]{1,40}$/;
-const MAX_BOARD_BYTES = 1_900_000; // D1 rows top out around 2 MB
 const MAX_IMAGE_BYTES = 15_000_000;
+const AI_KEY_LABEL = 'Tack AI key';
 
 export default {
   async fetch(request, env) {
@@ -25,64 +27,69 @@ export default {
 };
 
 async function handleApi(request, env, path) {
-  // Local development only (wrangler dev on localhost, DEV_USER set in .dev.vars): skip Access.
-  const local = ['localhost', '127.0.0.1'].includes(new URL(request.url).hostname);
-  const devUser = local && env.DEV_USER ? String(env.DEV_USER).toLowerCase() : null;
-  if (!devUser && (!env.TEAM_DOMAIN || !env.POLICY_AUD)) return json({ error: 'Sync is not configured yet' }, 503);
-  const user = devUser || await verifyAccess(request, env);
-  if (!user) return json({ error: 'Not signed in' }, 401);
+  // Public API reference
+  const origin = new URL(request.url).origin;
+  if (path === 'openapi.json' && request.method === 'GET') return json(openApiSpec(origin));
+  if (path === 'docs' && request.method === 'GET') {
+    return new Response(docsPage(origin), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' } });
+  }
+  if (!env.BETTER_AUTH_SECRET) return json({ error: 'Sync is not configured yet' }, 503);
+  const auth = createAuth(env, request);
+  if (new URL(request.url).pathname.startsWith(AUTH_BASE + '/')) return auth.handler(request);
+
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session) {
+    const res = json({ error: 'Not signed in' }, 401);
+    if (path === 'mcp') res.headers.set('WWW-Authenticate', 'Bearer realm="tack"');
+    return res;
+  }
+  const user = session.user.id;
   const method = request.method;
   const parts = path.split('/').filter(Boolean);
 
-  // Visiting /tack/api/login in the browser goes through the Access sign-in page, then lands here.
-  // (Also send people who open the API's address directly back to the app.)
-  if (parts[0] === 'login' || (!parts.length && method === 'GET')) return Response.redirect(new URL('/tack/', request.url).toString(), 302);
-  if (parts[0] === 'me' && method === 'GET') return json({ email: user });
+  // People who open the API's address directly get sent back to the app.
+  if (!parts.length && method === 'GET') return Response.redirect(new URL('/tack/', request.url).toString(), 302);
+  if (parts[0] === 'me' && method === 'GET') return json({ email: session.user.email, id: user });
+
+  // MCP server for AI tools (authenticated with an AI key as a bearer token)
+  if (path === 'mcp') return handleMcp(request, env, user);
+
+  // AI keys: separate long-lived sessions an AI tool uses as its bearer token.
+  if (parts[0] === 'ai-keys') {
+    if (method === 'POST') {
+      const ctx = await auth.$context;
+      const s = await ctx.internalAdapter.createSession(user, false, { userAgent: AI_KEY_LABEL });
+      return json({ token: s.token });
+    }
+    if (method === 'DELETE') {
+      const res = await env.DB.prepare('DELETE FROM "session" WHERE "userId" = ? AND "userAgent" = ?').bind(user, AI_KEY_LABEL).run();
+      return json({ revoked: res.meta.changes });
+    }
+    return json({ error: 'Method not allowed' }, 405);
+  }
 
   if (parts[0] === 'boards') {
     const id = parts[1];
     if (!id) {
       if (method !== 'GET') return json({ error: 'Method not allowed' }, 405);
-      const { results } = await env.DB.prepare(
-        'SELECT id, name, version, updated_at AS updatedAt, deleted FROM boards WHERE user = ?'
-      ).bind(user).all();
-      return json({ boards: results.map(b => ({ ...b, deleted: !!b.deleted })) });
+      return json({ boards: await listBoards(env, user) });
     }
     if (!ID_RE.test(id)) return json({ error: 'Bad board id' }, 400);
-    const row = await env.DB.prepare('SELECT * FROM boards WHERE user = ? AND id = ?').bind(user, id).first();
-
     if (method === 'GET') {
-      if (!row || row.deleted) return json({ error: 'Not found' }, 404);
-      return json({ id, name: row.name, items: JSON.parse(row.data), version: row.version, updatedAt: row.updated_at });
+      const board = await getBoard(env, user, id);
+      return board ? json(board) : json({ error: 'Not found' }, 404);
     }
-
     if (method === 'PUT') {
       const body = await request.text();
       if (body.length > MAX_BOARD_BYTES) return json({ error: 'Board is too large to sync' }, 413);
       let board;
       try { board = JSON.parse(body); } catch { return json({ error: 'Bad JSON' }, 400); }
-      if (!Array.isArray(board.items)) return json({ error: 'Missing items' }, 400);
-      const base = Number(board.baseVersion) || 0;
-      // Refuse to overwrite a newer copy saved from another device.
-      if (row && !row.deleted && row.version !== base) {
-        return json({ error: 'Conflict', version: row.version, updatedAt: row.updated_at }, 409);
-      }
-      const version = (row ? row.version : 0) + 1, now = Date.now();
-      const name = String(board.name || 'Untitled board').slice(0, 200);
-      await env.DB.prepare(
-        `INSERT INTO boards (user, id, name, data, version, updated_at, deleted) VALUES (?, ?, ?, ?, ?, ?, 0)
-         ON CONFLICT (user, id) DO UPDATE SET name = excluded.name, data = excluded.data,
-           version = excluded.version, updated_at = excluded.updated_at, deleted = 0`
-      ).bind(user, id, name, JSON.stringify(board.items), version, now).run();
-      return json({ version, updatedAt: now });
+      const saved = await saveBoard(env, user, id, board);
+      if (!saved.ok) return json({ error: saved.error, version: saved.version, updatedAt: saved.updatedAt }, saved.status);
+      return json({ version: saved.version, updatedAt: saved.updatedAt });
     }
-
     if (method === 'DELETE') {
-      if (!row) return json({ ok: true });
-      const now = Date.now();
-      await env.DB.prepare(
-        "UPDATE boards SET deleted = 1, data = '[]', version = version + 1, updated_at = ? WHERE user = ? AND id = ?"
-      ).bind(now, user, id).run();
+      await deleteBoard(env, user, id);
       return json({ ok: true });
     }
     return json({ error: 'Method not allowed' }, 405);
@@ -123,46 +130,4 @@ function json(data, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
-}
-
-// ---------- Cloudflare Access token verification ----------
-let certCache = null; // { keys, at }
-
-async function accessKeys(env) {
-  if (certCache && Date.now() - certCache.at < 3600_000) return certCache.keys;
-  const res = await fetch(`https://${env.TEAM_DOMAIN}/cdn-cgi/access/certs`);
-  if (!res.ok) throw new Error('Could not load Access certificates');
-  const { keys } = await res.json();
-  certCache = { keys, at: Date.now() };
-  return keys;
-}
-
-const b64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-
-async function verifyAccess(request, env) {
-  const cookie = request.headers.get('Cookie') || '';
-  const token = request.headers.get('Cf-Access-Jwt-Assertion') || (cookie.match(/(?:^|;\s*)CF_Authorization=([^;]+)/) || [])[1];
-  if (!token) return null;
-  const [h, p, sig] = token.split('.');
-  if (!h || !p || !sig) return null;
-  let header, payload;
-  try {
-    header = JSON.parse(new TextDecoder().decode(b64url(h)));
-    payload = JSON.parse(new TextDecoder().decode(b64url(p)));
-  } catch { return null; }
-  if (header.alg !== 'RS256') return null;
-
-  const jwk = (await accessKeys(env)).find(k => k.kid === header.kid);
-  if (!jwk) return null;
-  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-  const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, b64url(sig), new TextEncoder().encode(`${h}.${p}`));
-  if (!ok) return null;
-
-  const now = Math.floor(Date.now() / 1000);
-  const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  if (!aud.includes(env.POLICY_AUD)) return null;
-  if (payload.iss !== `https://${env.TEAM_DOMAIN}`) return null;
-  if (!payload.exp || payload.exp < now) return null;
-  if (typeof payload.email !== 'string' || !payload.email) return null;
-  return payload.email.toLowerCase();
 }
