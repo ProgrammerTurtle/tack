@@ -31,7 +31,7 @@ export function openApiSpec(origin) {
     },
     servers: [{ url: `${origin}/tack/api` }],
     tags: [
-      { name: 'Account', description: 'Create an account, sign in and out.' },
+      { name: 'Account', description: 'Create an account, sign in and out. Passkeys are supported too, through Better Auth\'s passkey endpoints under /auth/passkey/ (use the app to add one).' },
       { name: 'Boards', description: 'List, read, save and delete boards.' },
       { name: 'Images', description: 'Image files used by image items on boards.' },
       { name: 'AI tools', description: 'Connect AI assistants over MCP (Model Context Protocol). In the app: account menu → Connect an AI tool.' },

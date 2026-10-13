@@ -1,6 +1,7 @@
 // Email/password accounts with Better Auth, stored in the same D1 database as the boards.
 import { betterAuth } from 'better-auth';
 import { bearer } from 'better-auth/plugins';
+import { passkey } from '@better-auth/passkey';
 
 export const AUTH_BASE = '/tack/api/auth';
 
@@ -53,7 +54,11 @@ export function createAuth(env, request) {
     },
     rateLimit: { enabled: true, storage: 'database', window: 60, max: 30 },
     // Non-browser clients (scripts, the API docs' "try it", MCP) send the session token as a bearer token.
-    plugins: [bearer()],
+    plugins: [
+      bearer(),
+      // Passkeys are tied to this site's domain (e.g. parkerrupe.xyz).
+      passkey({ rpID: new URL(origin).hostname, rpName: 'Tack', origin }),
+    ],
     telemetry: { enabled: false },
   });
 }

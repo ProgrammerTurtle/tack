@@ -339,3 +339,5 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); }
 .dlg-actions.spread { justify-content: space-between; margin-top: 16px; }
 button.danger-text { color: #ff8a8e; box-shadow: none !important; }
 button.danger-text:hover { background: rgba(255, 107, 112, .1); }
+
+#authForm .btn:not(.primary) { padding: 9px 10px; box-shadow: inset 0 0 0 1px var(--line); text-align: center; }

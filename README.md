@@ -42,7 +42,7 @@ To use a different path than `/tack`, change it in the two routes in `wrangler.j
 
 ### Accounts and sync (optional)
 
-The hosted copy can sync boards and images across devices. Accounts are email + password ([Better Auth](https://www.better-auth.com)), boards live in Cloudflare D1 and images in KV. Without an account, boards just stay in the browser.
+The hosted copy can sync boards and images across devices. Accounts are email + password, with optional passkeys ([Better Auth](https://www.better-auth.com)), boards live in Cloudflare D1 and images in KV. Without an account, boards just stay in the browser.
 
 One-time setup (already done for parkerrupe.xyz; IDs are in `wrangler.jsonc`):
 

@@ -2704,18 +2704,22 @@
           <input name="password" type="password" placeholder="Password${up ? ' (8+ characters)' : ''}" autocomplete="${up ? 'new-password' : 'current-password'}" required minlength="8">
           <p class="auth-error" id="authError" role="alert"></p>
           <button class="btn primary" type="submit">${up ? 'Create account' : 'Sign in'}</button>
+          ${!up && passkeysSupported ? '<button class="btn" type="button" id="passkeySignIn">Sign in with a passkey</button>' : ''}
           <button class="link" type="button" id="authSwitch">${up ? 'Have an account? Sign in' : 'New here? Create an account'}</button>
         </form>`;
       $('#authSwitch').onclick = () => { authMode = up ? 'in' : 'up'; drawSyncMenu(); $('#authForm input[name=email]').focus(); };
       $('#authForm').onsubmit = submitAuth;
+      if ($('#passkeySignIn')) $('#passkeySignIn').onclick = passkeySignIn;
       return;
     }
     syncMenu.innerHTML = `<p><b>${esc(sync.email || '')}</b><br><span>${esc(SYNC_TEXT[st] || '')}${when && st === 'idle' ? ' · ' + when : ''}</span></p>
        <div class="row"><button id="syncNow">Sync now</button><button id="signOut">Sign out</button></div>
+       ${passkeysSupported ? '<button id="passkeyAdd" class="wide">Add a passkey</button>' : ''}
        <button id="aiConnect" class="wide">Connect an AI tool…</button>`;
     $('#syncNow').onclick = () => runSync();
     $('#signOut').onclick = signOut;
     $('#aiConnect').onclick = openAiDialog;
+    if ($('#passkeyAdd')) $('#passkeyAdd').onclick = passkeyAdd;
   }
 
   async function submitAuth(e) {
@@ -2747,6 +2751,85 @@
       err.textContent = 'Couldn’t reach the server. Check your connection.';
     } finally {
       btn.disabled = false;
+    }
+  }
+
+  // ---- passkeys (WebAuthn), talking to Better Auth's passkey endpoints
+  const passkeysSupported = !!(window.PublicKeyCredential && navigator.credentials);
+  const b64u = {
+    toBuf: s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)).buffer,
+    from: buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  };
+  const authApi = (path, opts = {}) => fetch(API + 'auth/' + path, {
+    credentials: 'same-origin', ...opts,
+    headers: { ...(opts.body && { 'Content-Type': 'application/json' }), ...opts.headers },
+  });
+  const apiError = async (res, fallback) => (await res.json().catch(() => ({}))).message || fallback;
+
+  async function passkeyAdd() {
+    try {
+      const optRes = await authApi('passkey/generate-register-options?name=' + encodeURIComponent(navigator.platform || 'Passkey'));
+      if (!optRes.ok) throw new Error(await apiError(optRes, 'Couldn’t start'));
+      const o = await optRes.json();
+      const cred = await navigator.credentials.create({ publicKey: {
+        ...o,
+        challenge: b64u.toBuf(o.challenge),
+        user: { ...o.user, id: b64u.toBuf(o.user.id) },
+        excludeCredentials: (o.excludeCredentials || []).map(c => ({ ...c, id: b64u.toBuf(c.id) })),
+      } });
+      const r = cred.response;
+      const response = {
+        id: cred.id, rawId: b64u.from(cred.rawId), type: cred.type,
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+        response: {
+          clientDataJSON: b64u.from(r.clientDataJSON),
+          attestationObject: b64u.from(r.attestationObject),
+          transports: r.getTransports ? r.getTransports() : undefined,
+          publicKeyAlgorithm: r.getPublicKeyAlgorithm ? r.getPublicKeyAlgorithm() : undefined,
+          publicKey: r.getPublicKey && r.getPublicKey() ? b64u.from(r.getPublicKey()) : undefined,
+          authenticatorData: r.getAuthenticatorData ? b64u.from(r.getAuthenticatorData()) : undefined,
+        },
+      };
+      const ver = await authApi('passkey/verify-registration', { method: 'POST', body: JSON.stringify({ response }) });
+      if (!ver.ok) throw new Error(await apiError(ver, 'Couldn’t save the passkey'));
+      syncMenu.hidden = true;
+      toast('Passkey added. Next time, choose “Sign in with a passkey”.');
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return; // cancelled
+      toast(err && err.name === 'InvalidStateError' ? 'This device already has a passkey for your account' : `Passkey: ${err.message || err}`);
+    }
+  }
+
+  async function passkeySignIn() {
+    const errEl = $('#authError');
+    try {
+      const optRes = await authApi('passkey/generate-authenticate-options');
+      if (!optRes.ok) throw new Error(await apiError(optRes, 'Couldn’t start'));
+      const o = await optRes.json();
+      const cred = await navigator.credentials.get({ publicKey: {
+        ...o,
+        challenge: b64u.toBuf(o.challenge),
+        allowCredentials: (o.allowCredentials || []).map(c => ({ ...c, id: b64u.toBuf(c.id) })),
+      } });
+      const r = cred.response;
+      const response = {
+        id: cred.id, rawId: b64u.from(cred.rawId), type: cred.type,
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+        response: {
+          clientDataJSON: b64u.from(r.clientDataJSON),
+          authenticatorData: b64u.from(r.authenticatorData),
+          signature: b64u.from(r.signature),
+          userHandle: r.userHandle ? b64u.from(r.userHandle) : undefined,
+        },
+      };
+      const ver = await authApi('passkey/verify-authentication', { method: 'POST', body: JSON.stringify({ response }) });
+      if (!ver.ok) throw new Error(await apiError(ver, 'That passkey didn’t work'));
+      syncMenu.hidden = true;
+      await startSync();
+      toast('Signed in. Your boards are syncing.');
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return; // cancelled
+      if (errEl) errEl.textContent = err.message || 'Passkey sign-in failed';
     }
   }
 
