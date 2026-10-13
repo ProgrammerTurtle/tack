@@ -665,20 +665,23 @@
   function routeFor(c, e) {
     const A = c.from.id ? byId.get(c.from.id) : null, B = c.to.id ? byId.get(c.to.id) : null;
     const bend = (c.from.id && sharedBend(c.from.id, e.s1)) ?? (c.to.id && sharedBend(c.to.id, e.s2)) ?? null;
-    const ends = [e.p1.x, e.p1.y, e.s1, e.p2.x, e.p2.y, e.s2, bend].join(',');
+    const ends = [e.p1.x, e.p1.y, e.s1, e.p2.x, e.p2.y, e.s2, bend, c.startArrow, c.endArrow, c.width].join(',');
     const k = ends + '|' + areaKey(e.p1, e.p2, 420);
     const hit = routeCache.get(c.id);
     if (hit && hit.k === k) return hit.pts;
     const dragging = S.drag && (S.drag.mode === 'move' || S.drag.mode === 'resize');
     // While dragging, lines whose own ends didn't move keep their route until you let go.
     if (dragging && hit && hit.ends === ends) return hit.pts;
+    // An arrowhead needs a straight run longer than itself before the line's last (or first) turn.
+    const head = 10 + (c.width || 2) * 2 + 6;
+    const seg = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const roomy = q => (!c.endArrow || seg(q[q.length - 1], q[q.length - 2]) >= head) && (!c.startArrow || seg(q[0], q[1]) >= head);
     let pts = orthoRoute(e.p1, NORM[e.s1], e.p2, NORM[e.s2], bend), final = true;
-    if (routeBlocked(pts, A, B)) {
+    if (routeBlocked(pts, A, B) || !roomy(pts)) {
       if (dragging && performance.now() > taskMemo().budget) final = false; // out of time this frame
       else {
-        pts = routeAround(e.p1, NORM[e.s1], e.p2, NORM[e.s2], 28, 400)
-          || routeAround(e.p1, NORM[e.s1], e.p2, NORM[e.s2], 8, 1200)
-          || pts;
+        const alt = [routeAround(e.p1, NORM[e.s1], e.p2, NORM[e.s2], 28, 400), routeAround(e.p1, NORM[e.s1], e.p2, NORM[e.s2], 8, 1200)].filter(Boolean);
+        pts = alt.find(roomy) || alt[0] || pts;
       }
     }
     if (routeCache.size > 2000) routeCache.clear();
