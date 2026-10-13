@@ -305,3 +305,7 @@ legend { font-size: 12px; font-weight: 600; color: var(--muted); text-transform:
 .dlg-text { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
 button.danger-solid { background: #e5484d; color: #fff; font-weight: 600; padding: 7px 14px; }
 button.danger-solid:hover { background: #f2555a; }
+
+/* lines: at least one screen pixel wide; pixel-aligned when zoomed out so weights look even */
+#world .line { stroke-width: max(calc(var(--sw) * 1px), calc(1px / var(--z))); }
+#world.far .line { shape-rendering: crispEdges; }

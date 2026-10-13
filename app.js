@@ -243,14 +243,28 @@
   const widthCache = new Map();
   function tw(s, size) {
     s = s.replace(LINK_MARKS, '');
-    let w = widthCache.get(s);
+    if (s.includes(BOLD_START)) {
+      // bold runs never span a space (see boldify), so each piece is measured on its own
+      let total = 0;
+      s.split(BOLD_START).forEach((part, i) => {
+        const [b, rest = ''] = i ? part.split(BOLD_END) : ['', part];
+        total += rawWidth(b, true) + rawWidth(rest.replace(BOLD_END, ''), false);
+      });
+      return total * size / 100;
+    }
+    return rawWidth(s.replace(BOLD_END, ''), false) * size / 100;
+  }
+  function rawWidth(s, bold) {
+    if (!s) return 0;
+    const key = (bold ? '\u0002' : '') + s;
+    let w = widthCache.get(key);
     if (w === undefined) {
       if (widthCache.size > 50000) widthCache.clear();
-      measure.font = `100px ${FONT}`;
+      measure.font = `${bold ? 'bold ' : ''}100px ${FONT}`;
       w = measure.measureText(s).width;
-      widthCache.set(s, w);
+      widthCache.set(key, w);
     }
-    return w * size / 100;
+    return w;
   }
 
   function wrapText(text, maxW, size) {
@@ -280,6 +294,10 @@
   // wrapped in private-use marker characters so rendering knows which parts are links.
   const LINK_RE = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi;
   const LINK_START = '\uE000', LINK_END = '\uE001', LINK_MARKS = /[\uE000\uE001]/g;
+  // Bold: **like this**. Each bolded word is wrapped in its own markers.
+  const BOLD_START = '\uE002', BOLD_END = '\uE003';
+  const boldify = text => text.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, (_, inner) =>
+    inner.split(/(\s+)/).map(w => (w && !/^\s+$/.test(w) ? BOLD_START + w + BOLD_END : w)).join(''));
   function linkify(text) {
     const links = [];
     const display = text.replace(LINK_RE, m => {
@@ -299,7 +317,8 @@
     let L = layoutCache.get(key);
     if (L) return L;
     if (layoutCache.size > 4000) layoutCache.clear();
-    const { display, links } = linkify(text);
+    const { display: linked, links } = linkify(text);
+    const display = boldify(linked);
     if (it.type === 'text') {
       const size = it.fontSize || 24, pad = 4, lh = size * 1.3;
       L = { size, lh, pad, align: 'start', lines: wrapText(display, Math.max(10, it.w - pad * 2), size) };
@@ -781,21 +800,24 @@
     const x = start ? box.x + L.pad : box.x + box.w / 2;
     const linkColor = isDark(color) ? '#0b57d0' : '#8ab4ff';
     let s = `<text font-family="${ff}" font-size="${n(L.size)}" fill="${color}" text-anchor="${start ? 'start' : 'middle'}">`;
-    let link = -1, inLink = false; // link state carries across wrapped lines
+    let link = -1, inLink = false, bold = false; // link state carries across wrapped lines
     L.lines.forEach((ln, i) => {
       const segs = [];
       let cur = '';
       for (const ch of ln) {
-        if (ch !== LINK_START && ch !== LINK_END) { cur += ch; continue; }
-        if (cur) segs.push([cur, inLink ? link : -1]);
+        if (ch !== LINK_START && ch !== LINK_END && ch !== BOLD_START && ch !== BOLD_END) { cur += ch; continue; }
+        if (cur) segs.push([cur, inLink ? link : -1, bold]);
         cur = '';
-        if (ch === LINK_START) { link++; inLink = true; } else inLink = false;
+        if (ch === LINK_START) { link++; inLink = true; }
+        else if (ch === LINK_END) inLink = false;
+        else bold = ch === BOLD_START;
       }
-      if (cur) segs.push([cur, inLink ? link : -1]);
+      if (cur) segs.push([cur, inLink ? link : -1, bold]);
       const y = top + i * L.lh + L.lh / 2 + L.size * 0.35;
-      segs.forEach(([t, k], j) => {
+      segs.forEach(([t, k, b], j) => {
         const pos = j ? '' : ` x="${n(x)}" y="${n(y)}"`;
-        const style = k < 0 ? '' : ` fill="${linkColor}" text-decoration="underline"${forExport ? '' : ` data-href="${esc(L.links[k] || '')}"`}`;
+        const style = (b ? ' font-weight="bold"' : '') +
+          (k < 0 ? '' : ` fill="${linkColor}" text-decoration="underline"${forExport ? '' : ` data-href="${esc(L.links[k] || '')}"`}`);
         s += `<tspan${pos}${style}>${esc(t)}</tspan>`;
       });
     });
@@ -910,7 +932,9 @@
         let s = `<g${attr}>`;
         if (!o.forExport) s += `<path d="${g.d}" fill="none" stroke="#000" stroke-opacity="0" stroke-width="16"/>`;
         const d = o.verts ? hopPath(g.q, o.verts, it.id) : g.d;
-        s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+        // On screen, lines never get thinner than a pixel and are pixel-aligned, so they all look the same weight when zoomed out.
+        const screen = o.forExport ? '' : ` class="line" style="--sw:${sw}"`;
+        s += `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw}"${screen} stroke-linecap="round" stroke-linejoin="round"/>`;
         if (it.endArrow) s += arrowMarkup(g.end, g.endDir, color, sw);
         if (it.startArrow) s += arrowMarkup(g.start, g.startDir, color, sw);
         if (it.label && showText) {
@@ -977,6 +1001,8 @@
     raf = 0;
     const t = `translate(${n(view.x)} ${n(view.y)}) scale(${view.z})`;
     world.setAttribute('transform', t);
+    world.style.setProperty('--z', view.z);
+    world.classList.toggle('far', view.z < 0.6);
     overlay.setAttribute('transform', t);
     dotPattern.setAttribute('patternTransform', t);
     dot.setAttribute('r', n(1.1 / view.z));
@@ -1378,6 +1404,20 @@
 
   editor.addEventListener('keydown', e => {
     e.stopPropagation();
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      const { selectionStart: a, selectionEnd: b, value: v } = editor;
+      const before = v.slice(0, a), sel = v.slice(a, b), after = v.slice(b);
+      if (before.endsWith('**') && after.startsWith('**')) {
+        editor.value = before.slice(0, -2) + sel + after.slice(2);
+        editor.setSelectionRange(a - 2, b - 2);
+      } else {
+        editor.value = before + '**' + sel + '**' + after;
+        editor.setSelectionRange(a + 2, b + 2);
+      }
+      editor.dispatchEvent(new Event('input'));
+      return;
+    }
     if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
       e.preventDefault();
       commitEdit();

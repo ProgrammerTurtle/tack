@@ -62,7 +62,8 @@ To test locally: put `DEV_USER=you@example.com` in `.dev.vars`, then `npx wrangl
 | Do this | Get this |
 | --- | --- |
 | Double-click the canvas | New sticky note |
-| Double-click an item, or press Enter | Edit its text |
+| Select an item and type, double-click it, or press Enter | Edit its text |
+| `**word**`, or ⌘B while editing | Bold |
 | Hover a note and drag one of its dots | Connect it. Drop on empty space to create a new connected note |
 | Tab / ⇧Tab on a selected note | New connected note to the right / below |
 | `V` `H` `N` `T` `R` `O` `L` | Select, pan, sticky, text, rectangle, ellipse, line |
