@@ -1,0 +1,34 @@
+// Cloudflare Worker for Tack at parkerrupe.xyz/tack.
+//   /tack/*      the static app (from dist/, built by build.sh)
+//   /tack/api/*  the sync API (worker/index.js), behind Cloudflare Access
+// Publish with: sh deploy.sh
+{
+  "name": "tack",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // /tack redirects to /tack/, which serves /tack/index.html
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none",
+    "run_worker_first": ["/tack/api/*"]
+  },
+  "routes": [
+    { "pattern": "parkerrupe.xyz/tack", "zone_name": "parkerrupe.xyz" },
+    { "pattern": "parkerrupe.xyz/tack/*", "zone_name": "parkerrupe.xyz" }
+  ],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "tack", "database_id": "48557965-07d4-4556-a93b-3691212edd7a" }
+  ],
+  "kv_namespaces": [
+    { "binding": "IMAGES", "id": "7bfe9cf2ad7e49368058afcd4edad80e" }
+  ],
+  // From your Cloudflare Access application (Zero Trust → Access → Applications):
+  // TEAM_DOMAIN is like "yourteam.cloudflareaccess.com", POLICY_AUD is the app's "Application Audience (AUD) Tag".
+  // Neither is secret. Until both are set, the sync API answers "not configured" and Tack stays local-only.
+  "vars": {
+    "TEAM_DOMAIN": "soft-frog-def6.cloudflareaccess.com",
+    "POLICY_AUD": "5d0754eebf0ba5b8827c66dcc62f8c16596ee3d3ca9189f3af7b0890eced9b25"
+  }
+}

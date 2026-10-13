@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#16181d">
+  <title>Tack</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='3' fill='%23ffe66d'/%3E%3Ccircle cx='16' cy='9' r='3.5' fill='%23e5484d'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css?v=24">
+</head>
+<body>
+  <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+        <circle id="dot" cx="12" cy="12" r="1.1" fill="#3a3f4b"/>
+      </pattern>
+    </defs>
+    <rect id="grid" width="100%" height="100%" fill="url(#dots)"/>
+    <g id="world"></g>
+    <g id="overlay"></g>
+  </svg>
+
+  <textarea id="editor" hidden spellcheck="true" aria-label="Edit text"></textarea>
+  <div id="emptyHint" hidden>Double-click anywhere to add a sticky note</div>
+
+  <header class="panel topbar">
+    <button class="icon" id="menuBtn" title="Boards" aria-label="Boards">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <input id="boardName" spellcheck="false" aria-label="Board name">
+  </header>
+
+  <div class="panel topright">
+    <button class="icon" id="syncBtn" hidden aria-label="Sync">
+      <svg viewBox="0 0 24 24"><path class="cloud" d="M7 18.5h10a4.5 4.5 0 00.6-8.96A6 6 0 006.2 9.6 4.5 4.5 0 007 18.5z"/><path class="slash" d="M4 4l16 16"/></svg><span class="label">Sign in</span>
+    </button>
+    <button class="icon" id="undoBtn" title="Undo (⌘Z)" aria-label="Undo">
+      <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg>
+    </button>
+    <button class="icon" id="redoBtn" title="Redo (⇧⌘Z)" aria-label="Redo">
+      <svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/></svg>
+    </button>
+    <button class="icon" id="helpBtn" title="Shortcuts (?)" aria-label="Keyboard shortcuts">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2"/><path d="M12 17h.01"/></svg>
+    </button>
+    <button class="primary" id="exportBtn">
+      <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Export
+    </button>
+  </div>
+
+  <nav class="panel toolrail" aria-label="Tools">
+    <button class="icon" data-tool="select" title="Select (V)"><svg viewBox="0 0 24 24"><path d="M5 3.5l6.5 16 2.3-6.7 6.7-2.3z"/></svg></button>
+    <button class="icon" data-tool="hand" title="Pan (H, or hold Space)"><svg viewBox="0 0 24 24"><path d="M8 12.5V6a1.5 1.5 0 013 0v5.5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7.5a6.5 6.5 0 01-6.5 6.5h-.6a6 6 0 01-4.9-2.6l-2.5-3.7a1.5 1.5 0 012.4-1.8L8 15"/></svg></button>
+    <span class="sep"></span>
+    <button class="icon" data-tool="sticky" title="Sticky note (N)"><svg viewBox="0 0 24 24"><path d="M4 4h16v10.5L14.5 20H4z"/><path d="M14.5 20v-5.5H20"/></svg></button>
+    <button class="icon" data-tool="text" title="Text (T)"><svg viewBox="0 0 24 24"><path d="M5 7V4.5h14V7M12 4.5v15M9 19.5h6"/></svg></button>
+    <button class="icon" data-tool="rect" title="Rectangle (R)"><svg viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="2"/></svg></button>
+    <button class="icon" data-tool="ellipse" title="Ellipse (O)"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.5" ry="6.5"/></svg></button>
+    <button class="icon" id="libraryBtn" title="Shapes & icons (K)" aria-label="Shapes and icons library"><svg viewBox="0 0 24 24"><path d="M7 3.5l4 7H3z"/><circle cx="17" cy="7" r="3.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><path d="M14 17h6M17 14v6"/></svg></button>
+    <button class="icon" id="imageBtn" title="Image (I) — or paste / drop one" aria-label="Insert image"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.75"/><path d="M20.5 15.5l-5-5L5 19.5"/></svg></button>
+    <button class="icon" data-tool="connector" title="Connection line (L)"><svg viewBox="0 0 24 24"><path d="M4.5 20v-8h13V5"/><path d="M14 8.5l3.5-3.5 3.5 3.5"/></svg></button>
+  </nav>
+
+  <div class="panel zoombar">
+    <button class="icon" id="zoomOut" title="Zoom out (⌘−)" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+    <button id="zoomLabel" title="Reset to 100% (⌘0)">100%</button>
+    <button class="icon" id="zoomIn" title="Zoom in (⌘+)" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg></button>
+    <span class="sep v"></span>
+    <button class="icon" id="zoomFit" title="Fit board (⇧1)" aria-label="Fit board"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  </div>
+
+  <div id="searchBar" class="panel searchbar" hidden role="search">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+    <input id="searchInput" type="search" placeholder="Search this board" spellcheck="false" aria-label="Search this board">
+    <span id="searchCount" aria-live="polite"></span>
+    <button class="icon" id="searchPrev" title="Previous (⇧Enter)" aria-label="Previous match"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+    <button class="icon" id="searchNext" title="Next (Enter)" aria-label="Next match"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <button class="icon" id="searchClose" title="Close (Esc)" aria-label="Close search"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div id="syncMenu" class="panel syncmenu" hidden></div>
+  <div id="ctx" class="panel ctx" hidden></div>
+  <div id="stickyPicker" class="panel ctx picker" hidden></div>
+  <aside id="library" class="panel library" hidden aria-label="Shapes and icons">
+    <div class="lib-head">
+      <input id="libSearch" type="search" placeholder="Search shapes, math & icons" spellcheck="false" aria-label="Search shapes and icons">
+      <button class="icon" id="libClose" title="Close (Esc)" aria-label="Close library"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="libBody"></div>
+    <p class="lib-foot">Click to add, or drag onto the board.</p>
+  </aside>
+
+  <aside id="sidebar" aria-label="Boards">
+    <div class="sb-head">
+      <h2>Boards</h2>
+      <button class="icon" id="sbClose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="sb-actions">
+      <button class="primary" id="newBoardBtn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New board</button>
+      <button id="importBtn">Import .json</button>
+    </div>
+    <ul id="boardList"></ul>
+    <button class="danger" id="clearBtn"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>Clear this board…</button>
+    <p class="sb-foot">Boards save in this browser, and sync across your devices when you’re signed in. Export to JSON for a backup.</p>
+  </aside>
+  <div id="scrim" hidden></div>
+
+  <dialog id="exportDlg">
+    <form method="dialog" id="exportForm">
+      <h2>Export</h2>
+      <fieldset class="seg" id="fmtSeg">
+        <legend>Format</legend>
+        <label><input type="radio" name="format" value="png" checked><span>PNG</span></label>
+        <label><input type="radio" name="format" value="svg"><span>SVG</span></label>
+        <label><input type="radio" name="format" value="pdf"><span>PDF</span></label>
+        <label><input type="radio" name="format" value="json"><span>JSON</span></label>
+      </fieldset>
+      <p class="fmt-note" id="fmtNote"></p>
+      <fieldset class="seg" id="scopeSeg">
+        <legend>What</legend>
+        <label><input type="radio" name="scope" value="all" checked><span>Whole board</span></label>
+        <label><input type="radio" name="scope" value="selection"><span>Selection</span></label>
+      </fieldset>
+      <fieldset class="seg" id="scaleSeg">
+        <legend>Resolution</legend>
+        <label><input type="radio" name="scale" value="1"><span>1×</span></label>
+        <label><input type="radio" name="scale" value="2"><span>2×</span></label>
+        <label><input type="radio" name="scale" value="4" checked><span>4×</span></label>
+        <label><input type="radio" name="scale" value="8"><span>8×</span></label>
+      </fieldset>
+      <fieldset class="seg" id="themeSeg">
+        <legend>Colors</legend>
+        <label><input type="radio" name="theme" value="light" checked><span>Light</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+      </fieldset>
+      <fieldset class="seg" id="bgSeg">
+        <legend>Background</legend>
+        <label><input type="radio" name="bg" value="none" checked><span>None</span></label>
+        <label><input type="radio" name="bg" value="solid"><span>Solid</span></label>
+      </fieldset>
+      <p class="dims" id="exportDims"></p>
+      <div class="dlg-actions">
+        <button value="cancel" formnovalidate>Cancel</button>
+        <button class="primary" value="go" id="exportGo">Export</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDlg">
+    <form method="dialog">
+      <h2>Shortcuts</h2>
+      <dl class="keys">
+        <dt>Double-click canvas</dt><dd>New sticky note</dd>
+        <dt>Select + type, or Enter</dt><dd>Edit text (or double-click)</dd>
+        <dt>Drag a blue dot</dt><dd>Connect; drop on empty space for a new note</dd>
+        <dt>Tab / ⇧Tab</dt><dd>New connected note right / below</dd>
+        <dt>V H N T R O L</dt><dd>Select, pan, sticky, text, rectangle, ellipse, line</dd>
+        <dt>I, or paste / drop</dt><dd>Add an image</dd>
+        <dt>K</dt><dd>Shapes, math &amp; icons library</dd>
+        <dt>⌘F</dt><dd>Search the board (Enter for next)</dd>
+        <dt>Click a link</dt><dd>Open it in a new tab</dd>
+        <dt>Space + drag, scroll</dt><dd>Pan</dd>
+        <dt>⌘ + scroll, pinch</dt><dd>Zoom</dd>
+        <dt>⇧1 &nbsp;/&nbsp; ⌘0</dt><dd>Fit board / 100%</dd>
+        <dt>⌥ + drag</dt><dd>Duplicate while dragging</dd>
+        <dt>⌘ + drag</dt><dd>Move without snapping lines straight</dd>
+        <dt>⌘D, ⌘C, ⌘V</dt><dd>Duplicate, copy, paste</dd>
+        <dt>⌘Z / ⇧⌘Z</dt><dd>Undo / redo</dd>
+        <dt>Arrows (⇧ for 10)</dt><dd>Nudge</dd>
+        <dt>⌘⇧E</dt><dd>Export</dd>
+      </dl>
+      <div class="dlg-actions"><button class="primary">Got it</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="clearDlg">
+    <form method="dialog">
+      <h2>Clear this board?</h2>
+      <p id="clearMsg" class="dlg-text"></p>
+      <div class="dlg-actions">
+        <button value="cancel" autofocus>Cancel</button>
+        <button class="danger-solid" value="clear">Clear board</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="importInput" accept=".json,application/json" hidden>
+  <input type="file" id="imageInput" accept="image/*" multiple hidden>
+  <script src="app.js?v=24"></script>
+</body>
+</html>
